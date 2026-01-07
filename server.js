@@ -12,6 +12,36 @@ const httpServer = http.createServer((req, res) => {
     res.end(JSON.stringify({ status: "ok", timestamp: new Date().toISOString() }));
     return;
   }
+  
+  // API endpoint to emit booking updates (called from webhook)
+  if (req.url === "/emit/booking" && req.method === "POST") {
+    let body = "";
+    req.on("data", chunk => { body += chunk; });
+    req.on("end", () => {
+      try {
+        const { bookingId, status, paymentStatus } = JSON.parse(body);
+        if (bookingId) {
+          io.to(`booking:${bookingId}`).emit("booking:updated", {
+            bookingId,
+            status,
+            paymentStatus,
+            timestamp: new Date().toISOString(),
+          });
+          console.log(`📧 Booking update emitted: ${bookingId} -> ${status}`);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ success: true }));
+        } else {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "bookingId required" }));
+        }
+      } catch (e) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Invalid JSON" }));
+      }
+    });
+    return;
+  }
+  
   res.writeHead(200, { "Content-Type": "text/plain" });
   res.end("POS Socket Server Running");
 });
@@ -33,10 +63,16 @@ const outletRooms = new Map();
 io.on("connection", (socket) => {
   console.log(`Client connected: ${socket.id}`);
 
-  // Join outlet room for targeted broadcasts
+  // Join outlet room for targeted broadcasts (POS)
   socket.on("join:outlet", (outletId) => {
     socket.join(`outlet:${outletId}`);
     console.log(`Socket ${socket.id} joined outlet:${outletId}`);
+  });
+
+  // Join booking room for payment updates
+  socket.on("join:booking", (bookingId) => {
+    socket.join(`booking:${bookingId}`);
+    console.log(`Socket ${socket.id} joined booking:${bookingId}`);
   });
 
   // Table status update - broadcast to all clients in same outlet
@@ -66,6 +102,19 @@ io.on("connection", (socket) => {
     });
   });
 
+  // Booking update - broadcast to clients watching this booking
+  socket.on("booking:update", (data) => {
+    const { bookingId, status, paymentStatus } = data;
+    console.log(`Booking update: ${bookingId} -> ${status}`);
+    
+    socket.to(`booking:${bookingId}`).emit("booking:updated", {
+      bookingId,
+      status,
+      paymentStatus,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
   // Full table refresh request
   socket.on("tables:refresh", (data) => {
     const { outletId } = data;
@@ -85,6 +134,7 @@ httpServer.listen(PORT, () => {
   console.log(`🚀 POS Socket Server running on port ${PORT}`);
   console.log(`   CORS Origin: ${CORS_ORIGIN}`);
   console.log(`   Health check: http://localhost:${PORT}/health`);
+  console.log(`   Booking emit: POST http://localhost:${PORT}/emit/booking`);
 });
 
 // Graceful shutdown
