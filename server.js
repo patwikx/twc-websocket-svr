@@ -102,6 +102,20 @@ io.on("connection", (socket) => {
     });
   });
 
+  // Kitchen update - broadcast to all clients in same outlet
+  socket.on("kitchen:update", (payload) => {
+    const { outletId, orderId, action, data } = payload;
+    console.log(`Kitchen update: ${orderId} - ${action} in outlet ${outletId}`);
+    
+    // Broadcast to all clients in the same outlet (POS and other KDS)
+    socket.to(`outlet:${outletId}`).emit("kitchen:updated", {
+      orderId,
+      action, // 'item_started', 'item_ready', 'order_ready'
+      data,
+      timestamp: new Date().toISOString(),
+    });
+  });
+
   // Booking update - broadcast to clients watching this booking
   socket.on("booking:update", (data) => {
     const { bookingId, status, paymentStatus } = data;
